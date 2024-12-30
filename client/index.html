@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle Life</title>
+    <style>
+        canvas {
+            background: #000;
+            width: 800px;
+            height: 600px;
+        }
+        #controls {
+            margin: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="particle-canvas"></canvas>
+    <div id="controls">
+        <!-- We'll add control UI elements here later -->
+    </div>
+    <script type="module">
+        import init, { ParticleLife } from './particle_life_client.js';
+
+        async function run() {
+            // Initialize the WebAssembly module
+            await init();
+
+            // Get the canvas and set its size
+            const canvas = document.getElementById('particle-canvas');
+            const width = 800;
+            const height = 600;
+            canvas.width = width;
+            canvas.height = height;
+
+            try {
+                // Create our particle simulation
+                const simulation = await new ParticleLife(canvas);
+
+                // Handle window resizing
+                window.addEventListener('resize', () => {
+                    const width = canvas.clientWidth;
+                    const height = canvas.clientHeight;
+                    canvas.width = width;
+                    canvas.height = height;
+                    simulation.resize(width, height);
+                });
+
+                // Animation loop
+                function frame() {
+                    simulation.render();
+                    requestAnimationFrame(frame);
+                }
+
+                // Start the animation
+                requestAnimationFrame(frame);
+            } catch (e) {
+                console.error("Failed to initialize simulation:", e);
+            }
+        }
+
+        run().catch(console.error);
+    </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# ./Cargo.toml
+[workspace]
+members = ["client", "server"]
+resolver = "2"
+
+[workspace.dependencies]
+wgpu = "0.19"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true

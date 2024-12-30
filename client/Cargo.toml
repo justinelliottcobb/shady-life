@@ -1,0 +1,43 @@
+# ./client/Cargo.toml
+[package]
+name = "particle-life-client"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "Navigator",
+    "Gpu",
+    "GpuAdapter",
+    "GpuBindGroup",
+    "GpuBindGroupLayout",
+    "GpuBuffer",
+    "GpuCanvasConfiguration",
+    "GpuCanvasContext",
+    "GpuComputePipeline",
+    "GpuDevice",
+    "GpuQueue",
+    "GpuRenderPassEncoder",
+    "GpuRenderPipeline",
+    "GpuShaderModule",
+    "GpuTexture",
+    "GpuTextureView"
+]}
+js-sys = "0.3"
+wgpu = { workspace = true, features = ["webgl"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+console_error_panic_hook = "0.1"
+console_log = "1.0"
+log = { workspace = true }
+cgmath = "0.18"
+rand = "0.8"
+getrandom = { version = "0.2", features = ["js"] }
