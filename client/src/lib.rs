@@ -1,6 +1,16 @@
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 use std::sync::Arc;
+use rand::Rng;
+use wgpu::util::DeviceExt;
+
+// Vertex buffer data layout
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct ParticleVertex {
+    position: [f32; 2],
+    color: [f32; 4],
+}
 
 // This struct represents our particle simulation state
 #[wasm_bindgen]
@@ -10,7 +20,15 @@ pub struct ParticleLife {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: (u32, u32),
+    
+    // Rendering resources
+    render_pipeline: wgpu::RenderPipeline,
+    vertex_buffer: wgpu::Buffer,
+    num_particles: u32,
 }
+
+// Constants
+const INITIAL_NUM_PARTICLES: u32 = 1000;
 
 #[wasm_bindgen]
 impl ParticleLife {
@@ -75,6 +93,100 @@ impl ParticleLife {
         
         surface.configure(&device, &config);
 
+        // Create shader modules
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Particle Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/render.wgsl").into()),
+        });
+
+        // Create pipeline layout
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+        // Create render pipeline
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<ParticleVertex>() as wgpu::BufferAddress,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x2,
+                                offset: 0,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 8,
+                                shader_location: 1,
+                            },
+                        ],
+                    }
+                ],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent::REPLACE,
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::PointList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
+        // Create initial particle data
+        let mut particles = Vec::with_capacity(INITIAL_NUM_PARTICLES as usize);
+        let mut rng = rand::thread_rng();
+        for _ in 0..INITIAL_NUM_PARTICLES {
+            particles.push(ParticleVertex {
+                position: [
+                    rng.gen_range(-1.0..1.0),
+                    rng.gen_range(-1.0..1.0)
+                ],
+                color: [
+                    rng.gen_range(0.5..1.0),
+                    rng.gen_range(0.5..1.0),
+                    rng.gen_range(0.5..1.0),
+                    1.0,
+                ],
+            });
+        }
+
+        // Create vertex buffer
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Particle Vertex Buffer"),
+            contents: bytemuck::cast_slice(&particles),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
         log::info!("ParticleLife initialization complete");
 
         Ok(ParticleLife {
@@ -83,6 +195,9 @@ impl ParticleLife {
             queue,
             config,
             size,
+            render_pipeline,
+            vertex_buffer,
+            num_particles: INITIAL_NUM_PARTICLES,
         })
     }
 
@@ -98,9 +213,9 @@ impl ParticleLife {
             label: Some("Render Encoder"),
         });
 
-        // Create a render pass to clear the screen to a dark color
+        // Create a render pass and draw the particles
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -119,6 +234,10 @@ impl ParticleLife {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(0..self.num_particles, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
