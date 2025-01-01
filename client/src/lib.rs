@@ -8,7 +8,7 @@ use std::sync::Arc;
 use rand::Rng;
 use wgpu::util::DeviceExt;
 
-use particle::{Particle, ParticleVertex};
+use particle::{Particle, Vertex};
 use simulation::{ComputePass, SimParams};
 use render::RenderPass;
 
@@ -22,10 +22,12 @@ pub struct ParticleLife {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: (u32, u32),
+    
     render_pass: RenderPass,
-    vertex_buffer: wgpu::Buffer,
+    particle_position_buffer: wgpu::Buffer,  // For instancing particle positions
+    particle_color_buffer: wgpu::Buffer,     // For instancing particle colors
     compute_pass: ComputePass,
-    particle_buffer: wgpu::Buffer,
+    particle_buffer: wgpu::Buffer,           // Full particle data for compute
     num_particles: u32,
     last_time: f64,
 }
@@ -65,8 +67,31 @@ impl ParticleLife {
         let config = init_surface_config(&surface, &adapter, size);
         surface.configure(&device, &config);
 
-        let particles = init_particles();
-        let (particle_buffer, vertex_buffer) = create_buffers(&device, &particles);
+        let (particle_buffer, particle_position_buffer, particle_color_buffer) = {
+            let particles = init_particles();
+            
+            let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Particle Buffer"),
+                contents: bytemuck::cast_slice(&particles),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            });
+
+            let particle_position_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Particle Position Buffer"),
+                size: (INITIAL_NUM_PARTICLES * std::mem::size_of::<[f32; 2]>() as u32) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let particle_color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Particle Color Buffer"),
+                size: (INITIAL_NUM_PARTICLES * std::mem::size_of::<[f32; 4]>() as u32) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            (particle_buffer, particle_position_buffer, particle_color_buffer)
+        };
 
         let render_pass = RenderPass::new(&device, config.format);
         let compute_pass = ComputePass::new(&device, &particle_buffer);
@@ -78,9 +103,10 @@ impl ParticleLife {
             config,
             size,
             render_pass,
-            vertex_buffer,
-            compute_pass,
             particle_buffer,
+            particle_position_buffer,
+            particle_color_buffer,
+            compute_pass,
             num_particles: INITIAL_NUM_PARTICLES,
             last_time: 0.0,
         })
@@ -94,27 +120,14 @@ impl ParticleLife {
         let frame = self.get_next_frame()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         
-        // Create a single encoder for all commands
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Command Encoder"),
         });
     
-        // Execute compute pass
         self.execute_compute_pass(&mut encoder);
-    
-        // Copy particle data to vertex buffer
-        encoder.copy_buffer_to_buffer(
-            &self.particle_buffer,
-            0,
-            &self.vertex_buffer,
-            0,
-            (self.num_particles * std::mem::size_of::<ParticleVertex>() as u32) as u64,
-        );
-    
-        // Execute render pass
+        self.copy_compute_data(&mut encoder);
         self.execute_render_pass(&mut encoder, &view);
     
-        // Submit all commands at once
         self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
     
@@ -163,6 +176,26 @@ impl ParticleLife {
             .map_err(|e| JsValue::from_str(&format!("Failed to get next frame: {}", e)))
     }
 
+    fn copy_compute_data(&self, encoder: &mut wgpu::CommandEncoder) {
+        // Extract positions for instancing
+        encoder.copy_buffer_to_buffer(
+            &self.particle_buffer,
+            0,
+            &self.particle_position_buffer,
+            0,
+            (self.num_particles * std::mem::size_of::<[f32; 2]>() as u32) as u64,
+        );
+
+        // Extract colors for instancing
+        encoder.copy_buffer_to_buffer(
+            &self.particle_buffer,
+            8, // Offset past position
+            &self.particle_color_buffer,
+            0,
+            (self.num_particles * std::mem::size_of::<[f32; 4]>() as u32) as u64,
+        );
+    }
+
     fn execute_compute_pass(&self, encoder: &mut wgpu::CommandEncoder) {
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Compute Pass"),
@@ -181,9 +214,9 @@ impl ParticleLife {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color { 
-                        r: 0.0, 
+                        r: 0.1, 
                         g: 0.1, 
-                        b: 0.2, 
+                        b: 0.1, 
                         a: 1.0 
                     }),
                     store: wgpu::StoreOp::Store,
@@ -193,10 +226,13 @@ impl ParticleLife {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-
+    
         render_pass.set_pipeline(&self.render_pass.pipeline);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.draw(0..self.num_particles, 0..1);
+        render_pass.set_vertex_buffer(0, self.render_pass.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(1, self.particle_position_buffer.slice(..));
+        render_pass.set_vertex_buffer(2, self.particle_color_buffer.slice(..));
+        render_pass.set_index_buffer(self.render_pass.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.draw_indexed(0..6, 0, 0..self.num_particles);  // 6 indices per quad, instanced
     }
 }
 
@@ -235,26 +271,6 @@ fn init_particles() -> Vec<Particle> {
         });
     }
     particles
-}
-
-fn create_buffers(
-    device: &wgpu::Device,
-    particles: &[Particle],
-) -> (wgpu::Buffer, wgpu::Buffer) {
-    let particle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Particle Buffer"),
-        contents: bytemuck::cast_slice(particles),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-    });
-
-    let vertices: Vec<ParticleVertex> = particles.iter().map(|p| p.into()).collect();
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    });
-
-    (particle_buffer, vertex_buffer)
 }
 
 #[wasm_bindgen(start)]
