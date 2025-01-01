@@ -94,18 +94,16 @@ impl ParticleLife {
         let frame = self.get_next_frame()?;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         
+        // Create a single encoder for all commands
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Command Encoder"),
         });
     
+        // Execute compute pass
         self.execute_compute_pass(&mut encoder);
     
-        // Add copy command
-        let mut copy_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Copy Buffer Encoder"),
-        });
-    
-        copy_encoder.copy_buffer_to_buffer(
+        // Copy particle data to vertex buffer
+        encoder.copy_buffer_to_buffer(
             &self.particle_buffer,
             0,
             &self.vertex_buffer,
@@ -113,12 +111,11 @@ impl ParticleLife {
             (self.num_particles * std::mem::size_of::<ParticleVertex>() as u32) as u64,
         );
     
-        self.queue.submit(vec![encoder.finish(), copy_encoder.finish()]);
+        // Execute render pass
+        self.execute_render_pass(&mut encoder, &view);
     
-        self.execute_render_pass(&mut self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        }), &view);
-    
+        // Submit all commands at once
+        self.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
     
         Ok(())
@@ -183,7 +180,12 @@ impl ParticleLife {
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color { 
+                        r: 0.0, 
+                        g: 0.1, 
+                        b: 0.2, 
+                        a: 1.0 
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -227,9 +229,9 @@ fn init_particles() -> Vec<Particle> {
     
     for _ in 0..INITIAL_NUM_PARTICLES {
         particles.push(Particle {
-            position: [rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)],
-            velocity: [rng.gen_range(-0.1..0.1), rng.gen_range(-0.1..0.1)],
-            color: [rng.gen_range(0.5..1.0), rng.gen_range(0.5..1.0), rng.gen_range(0.5..1.0), 1.0],
+            position: [rng.gen_range(-0.5..0.5), rng.gen_range(-0.5..0.5)],  // Smaller range
+            velocity: [rng.gen_range(-0.2..0.2), rng.gen_range(-0.2..0.2)],  // Larger velocity
+            color: [1.0, 0.0, 0.0, 1.0],  // Bright red for visibility
         });
     }
     particles
