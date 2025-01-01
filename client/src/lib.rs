@@ -177,19 +177,21 @@ impl ParticleLife {
     }
 
     fn copy_compute_data(&self, encoder: &mut wgpu::CommandEncoder) {
-        // Extract positions for instancing
+        let particle_stride = std::mem::size_of::<Particle>() as wgpu::BufferAddress;
+        
+        // Copy positions (first component of Particle)
         encoder.copy_buffer_to_buffer(
             &self.particle_buffer,
-            0,
+            0, // Position is at start of Particle struct
             &self.particle_position_buffer,
             0,
             (self.num_particles * std::mem::size_of::<[f32; 2]>() as u32) as u64,
         );
-
-        // Extract colors for instancing
+    
+        // Copy colors (offset by position and velocity in Particle struct)
         encoder.copy_buffer_to_buffer(
             &self.particle_buffer,
-            8, // Offset past position
+            (std::mem::size_of::<[f32; 4]>() as u32) as u64, // Offset past position and velocity
             &self.particle_color_buffer,
             0,
             (self.num_particles * std::mem::size_of::<[f32; 4]>() as u32) as u64,
@@ -265,9 +267,20 @@ fn init_particles() -> Vec<Particle> {
     
     for _ in 0..INITIAL_NUM_PARTICLES {
         particles.push(Particle {
-            position: [rng.gen_range(-0.5..0.5), rng.gen_range(-0.5..0.5)],  // Smaller range
-            velocity: [rng.gen_range(-0.2..0.2), rng.gen_range(-0.2..0.2)],  // Larger velocity
-            color: [1.0, 0.0, 0.0, 1.0],  // Bright red for visibility
+            position: [
+                rng.gen_range(-0.8..0.8),  // Spread out more
+                rng.gen_range(-0.8..0.8),
+            ],
+            velocity: [
+                rng.gen_range(-0.2..0.2),
+                rng.gen_range(-0.2..0.2),
+            ],
+            color: [
+                rng.gen_range(0.5..1.0),
+                rng.gen_range(0.5..1.0),
+                rng.gen_range(0.5..1.0),
+                1.0,
+            ],
         });
     }
     particles
